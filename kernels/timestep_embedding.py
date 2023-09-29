@@ -1,4 +1,4 @@
-# Linear Kernel for SDXL is a Feed Forward, SiLu activation, Feed Forward
+# Linear, SiLU, Linear
 import torch
 
 import triton
@@ -11,6 +11,7 @@ def SiLU(input):
 @triton.jit
 def linear_sdxl(
     a_ptr, w1_ptr, w3_ptr, out_ptr,
+    bias_1, bias_2,
     M, N, K,
     stride_am, stride_ak,
     stride_w1k, stride_w1n,
@@ -38,19 +39,18 @@ def linear_sdxl(
     acc2 = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
     a_sum = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_K), dtype=tl.float32)
+
     for _ in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
         a = tl.load(a_ptrs)
         a_sum += tl.math.pow(a.to(tl.float32), 2)
         b = tl.load(w1_ptrs)
         acc1 += tl.dot(a, b)
         c = tl.load(w3_ptrs)
-        acc1 = SiLU(acc1)
         acc2 += tl.dot(a, c)
 
         a_ptrs += BLOCK_SIZE_K * stride_ak
         w1_ptrs += BLOCK_SIZE_K * stride_w1k
         w3_ptrs += BLOCK_SIZE_K * stride_w3k
-
 
     a_mean = tl.sum(a_sum, axis=1) / K + EPS
     a_norm = tl.math.rsqrt(a_mean)
@@ -65,7 +65,7 @@ def linear_sdxl(
     tl.store(out_ptrs, accumulator, mask=out_mask)
 
 
-def kernel_linear(x: torch.Tensor, w1: torch.Tensor, w3: torch.Tensor) -> torch.Tensor:
+def timestep_embedding(x: torch.Tensor, w1: torch.Tensor, w3: torch.Tensor) -> torch.Tensor:
     assert x.dtype == torch.float16
     assert w1.dtype == w3.dtype
     assert w1.dtype in [torch.int8, torch.float16]
@@ -116,12 +116,12 @@ if __name__ == "__main__":
         return a * b
 
 
-    output_triton = kernel_linear(x=x, w1=w1_w, w3=w3_w)
+    output_triton = timestep_embedding(x=x, w1=w1_w, w3=w3_w)
     output_pytorch = ff_pytorch(x=x, w1=w1_w, w3=w3_w)
 
     assert torch.allclose(output_triton, w1_silu_p * w3_p, atol=1e-1), f"max diff: {torch.max(torch.abs(output_triton - w1_silu_p * w3_p))}"
     assert torch.allclose(output_triton, output_pytorch, atol=1e-1), f"max diff: {torch.max(torch.abs(output_triton - output_pytorch))}"
 
-    print("rms matmul silu mul triton", triton.testing.do_bench(lambda: kernel_linear(x=x, w1=w1_w, w3=w3_w)))
+    print("rms matmul silu mul triton", triton.testing.do_bench(lambda: timestep_embedding(x=x, w1=w1_w, w3=w3_w)))
     print("rms matmul silu mul pytorch", triton.testing.do_bench(lambda: ff_pytorch(x=x, w1=w1_w, w3=w3_w)))
     

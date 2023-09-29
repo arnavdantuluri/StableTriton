@@ -1,0 +1,62 @@
+All Ops:
+Timesteps (Torch; Triton is outperformed at longer sequences (Potentially due to blocking?))
+TimestepEmbedding (Triton)
+GroupNorm (Triton)
+Conv2D (Torch, not possible to implement conv at suitable performace in Triton)
+Dropout (Triton)
+Linear (Triton)
+SiLU (Triton)
+Attention (Triton, FA2/FA1 based on available gpu)
+GeGLU (Triton)
+LayerNorm (Triton)
+
+Fused Kernels:
+    ResNet: 
+        TimestepEmbedding: 
+            Linear; SiLU; Linear
+        GroupNorm; SiLU
+        SiLU; Linear
+        GroupNorm; SiLU; Dropout
+    Attention:
+        QKV Proj can be fused into one kernel
+        FA2/FA1 depending on available GPU
+        Linear; Dropout
+    FeedForward
+        GeGLU:
+            Gated Linear; GeGLU (Gated might be diff to implement in Triton)
+        GeGLU; Dropout; Linear
+    BasicTransformerBlock:
+        LayerNorm (All LayerNorm is left unfused for now; possible entry point for better performace)
+        Attention (See above)
+        FeedForward (See above)
+    Transformer2DModel:
+        GroupNorm; Linear
+        BasicTransformerBlock (See above)
+        Linear
+    Downsample2D (Left untouced since only op is a conv2d)
+    Upsample2D (Left untouced since main op is a conv2d)
+    DownBlock2D:
+        ResNet (See above)
+        Downsample2D (See above)
+    CrossAttnDownBlock2D:
+        ResNet (See above)
+        Transformer2DModel (See above)
+        Downsample2D (See above)
+    CrossAttnUpBlock2D:
+        ResNet (See above)
+        Transformer2DModel (See above)
+        Downsample2D (See above)
+    UpBlock2D:
+        ResNet (See above)
+    UNetMidBlock2DCrossAttn:
+        Transforsmer2DModel (See above)
+        ResNet (See above)
+    UNet2DConditionModel:
+        TimestepEmbedding (See above)
+        Timesteps (See above)
+        DownBlock2D (See above)
+        CrossAttnDownBlock2D (See above)
+        CrossAttnUpBlock2D (See above)
+        UpBlock2D (See above)
+        GroupNorm; SiLU
+    
