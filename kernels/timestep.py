@@ -1,3 +1,4 @@
+#Triton kernels are slower than vanilla torch ~5x slower at [1, 1024, 1024]
 import triton
 import triton.language as tl
 import torch
@@ -6,13 +7,12 @@ from einops import rearrange
 
 # Torch Inductor Kernel for inspiration
 @triton.jit
-def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel, XBLOCK : tl.constexpr):
-    xnumel = 32768
+def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel: tl.constexpr, XBLOCK : tl.constexpr):
     xoffset = tl.program_id(0) * XBLOCK
     xindex = xoffset + tl.arange(0, XBLOCK)[:]
     xmask = xindex < xnumel
     x2 = xindex
-    x0 = xindex % 128
+    x0 = xindex % XBLOCK
     tmp0 = tl.load(in_ptr0 + (x2), xmask)
     tmp1 = x0
     tmp2 = tmp1.to(tl.float64)
@@ -23,7 +23,7 @@ def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel, XBLOCK : tl.constexpr):
     tmp7 = tmp6.to(tl.float32)
     tmp8 = -9.210340371976184
     tmp9 = tmp7 * tmp8
-    tmp10 = 128.0
+    tmp10 = XBLOCK
     tmp11 = tmp9 / tmp10
     tmp12 = tl.exp(tmp11)
     tmp13 = tmp0 * tmp12
@@ -90,14 +90,12 @@ def triton_wrapper(num_channels, timesteps):
     sin_emb = torch.empty(b_shape, m_shape, k_shape, dtype=timesteps.dtype).to(timesteps.device)
     cos_emb = torch.empty(b_shape, m_shape, k_shape, dtype=timesteps.dtype).to(timesteps.device)
     grid = lambda META: (
-        timesteps.numel() // META["BLOCK_SIZE_M"], 
+        timesteps.numel() // 128, 
         )
-    sinusoidal_kernel[grid](
+    triton_[grid](
         timesteps, sin_emb, cos_emb,
-        b_shape, m_shape, k_shape,
-        b_stride, m_stride, k_stride,
-        half_dim, -math.log(base),
-        e)
+        timesteps.numel(), 128
+        )
     return sin_emb, cos_emb
 
 def torch_ref(num_channels, timesteps):
@@ -116,12 +114,12 @@ def torch_ref(num_channels, timesteps):
     return sin_emb, cos_emb
 
 if __name__ == "__main__":
-    x = torch.rand((20, 512, 512), dtype=torch.float32).cuda()
-    torch_sin, torch_cos = torch_ref(1024, x)
+    x = torch.rand((1, 256, 256), dtype=torch.float32).cuda()
+    torch_sin, torch_cos = torch_ref(512, x)
     # Prove that emb = timesteps[:, None].float() * emb[None, :] just expands dim by 1
     # torch_sin, torch_cos = rearrange(torch_sin, "(b e) h w -> b e h w", e=1), rearrange(torch_cos, "(b e) h w -> b e h w", e=1)
     
-    triton_sin, triton_cos = triton_wrapper(1024, x)
+    triton_sin, triton_cos = triton_wrapper(512, x)
     triton_sin, triton_cos = rearrange(triton_sin, "(b e) h w -> b e h w", e=1), rearrange(triton_cos, "(b e) h w -> b e h w", e=1)
 
     assert (torch_sin - triton_sin).all() < 1e-8, "Assertion does not hold, some issue in the triton kernel"
@@ -131,7 +129,7 @@ if __name__ == "__main__":
     triton.testing.Benchmark(
         x_names=['size'],  # Argument names to use as an x-axis for the plot.
         x_vals=[
-            i for i in range(64, 256, 16)
+            i for i in range(64, 1024, 128)
         ],  # Different possible values for `x_name`.
         x_log=True,  # x axis is logarithmic.
         line_arg='provider',  # Argument name whose value corresponds to a different line in the plot.
@@ -155,4 +153,4 @@ if __name__ == "__main__":
         gbps = lambda ms: 12 * size / ms * 1e-6
         return min_ms
 
-benchmark.run(print_data=True, show_plots=True)
+    benchmark.run(print_data=True, show_plots=True)

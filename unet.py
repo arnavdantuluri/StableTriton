@@ -123,16 +123,8 @@ class Attention(nn.Module):
 
     def forward(self, hidden_states, encoder_hidden_states=None):
         q = self.to_q(hidden_states)
-        k = (
-            self.to_k(encoder_hidden_states)
-            if encoder_hidden_states is not None
-            else self.to_k(hidden_states)
-        )
-        v = (
-            self.to_v(encoder_hidden_states)
-            if encoder_hidden_states is not None
-            else self.to_v(hidden_states)
-        )
+        k = self.to_k(hidden_states)
+        v = self.to_v(hidden_states)
         b, t, c = q.size()
 
         q = q.view(q.size(0), q.size(1), self.num_heads, self.head_dim).transpose(1, 2)

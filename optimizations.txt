@@ -1,5 +1,5 @@
 All Ops:
-Timesteps (Torch; Triton is outperformed at longer sequences (Potentially due to blocking?))
+Timesteps (Torch; Triton is outperformed at longer sequences)
 TimestepEmbedding (Triton)
 GroupNorm (Triton)
 Conv2D (Torch, not possible to implement conv at suitable performace in Triton)
@@ -13,24 +13,30 @@ LayerNorm (Triton)
 Fused Kernels:
     ResNet: 
         TimestepEmbedding: 
-            Linear; SiLU; Linear
+            Linear; SiLU
+            Linear
         GroupNorm; SiLU
         SiLU; Linear
-        GroupNorm; SiLU; Dropout
+        GroupNorm; SiLU
+        Dropout
     Attention:
         QKV Proj can be fused into one kernel
         FA2/FA1 depending on available GPU
-        Linear; Dropout
+        Linear
+        Dropout
     FeedForward
         GeGLU:
             Gated Linear; GeGLU (Gated might be diff to implement in Triton)
-        GeGLU; Dropout; Linear
+        GeGLU
+        Dropout
+        Linear
     BasicTransformerBlock:
         LayerNorm (All LayerNorm is left unfused for now; possible entry point for better performace)
         Attention (See above)
         FeedForward (See above)
     Transformer2DModel:
-        GroupNorm; Linear
+        GroupNorm
+        Linear
         BasicTransformerBlock (See above)
         Linear
     Downsample2D (Left untouced since only op is a conv2d)

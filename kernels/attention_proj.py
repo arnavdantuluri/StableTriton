@@ -7,7 +7,7 @@ import triton.language as tl
 torch.manual_seed(1234)
 
 @triton.jit
-def rms_matmul_rbe(
+def matmul_(
         x_ptr, w_ptr, out_ptr,
         M, N, K,
         stride_x_batch, stride_x_m, stride_x_k,
@@ -50,7 +50,7 @@ def rms_matmul_rbe(
     tl.store(out_ptrs, accumulator, mask=out_mask)
 
 @triton.jit
-def rms_matmul_rbe_qkv(x_ptr,
+def qkv_proj(x_ptr,
                        q_weight_ptr, k_weight_ptr, v_weight_ptr,
                        q_ptr, k_ptr, v_ptr,
                        M, N, K,
@@ -65,7 +65,7 @@ def rms_matmul_rbe_qkv(x_ptr,
                        EPS: tl.constexpr,
                        BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr, BLOCK_SIZE_K: tl.constexpr):
     # q
-    rms_matmul_rbe(
+    matmul_(
         x_ptr=x_ptr,
         w_ptr=q_weight_ptr, out_ptr=q_ptr,
         M=M, N=N, K=K,
@@ -77,7 +77,7 @@ def rms_matmul_rbe_qkv(x_ptr,
         BLOCK_SIZE_M=BLOCK_SIZE_M, BLOCK_SIZE_N=BLOCK_SIZE_N, BLOCK_SIZE_K=BLOCK_SIZE_K,
     )
     # k
-    rms_matmul_rbe(
+    matmul_(
         x_ptr=x_ptr,
         w_ptr=k_weight_ptr, out_ptr=k_ptr,
         M=M, N=N, K=K,
@@ -89,7 +89,7 @@ def rms_matmul_rbe_qkv(x_ptr,
         BLOCK_SIZE_M=BLOCK_SIZE_M, BLOCK_SIZE_N=BLOCK_SIZE_N, BLOCK_SIZE_K=BLOCK_SIZE_K,
     )
     # v
-    rms_matmul_rbe(
+    matmul_(
         x_ptr=x_ptr,
         w_ptr=v_weight_ptr, out_ptr=v_ptr,
         M=M, N=N, K=K,
@@ -102,12 +102,12 @@ def rms_matmul_rbe_qkv(x_ptr,
     )
 
 
-def rms_matmul_rbe_qkv_wrapper(x: torch.Tensor,
+def qkv_proj_wrapper(x: torch.Tensor,
                                q_weight: torch.Tensor, k_weight: torch.Tensor, v_weight: torch.Tensor,
                                n_heads: int, head_dim: int,
                                k: torch.Tensor,
                                v: torch.Tensor,
-                               eps: float = 1e-6, theta=10000.):
+                               eps: float = 1e-6):
     assert q_weight.shape == k_weight.shape == v_weight.shape
     assert q_weight.dtype == k_weight.dtype == v_weight.dtype
     assert q_weight.dtype in [torch.float16, torch.int8]
@@ -132,7 +132,7 @@ def rms_matmul_rbe_qkv_wrapper(x: torch.Tensor,
     grid = lambda META: (
     batch, triton.cdiv(META["M"], META["BLOCK_SIZE_M"]) * triton.cdiv(META["N"], META["BLOCK_SIZE_N"]))
 
-    rms_matmul_rbe_qkv[grid](
+    qkv_proj[grid](
         x_ptr=x,
         q_weight_ptr=q_weight_t, k_weight_ptr=k_weight_t, v_weight_ptr=v_weight_t,
         q_ptr=q_ptr, k_ptr=k_ptr, v_ptr=v_ptr,
@@ -145,7 +145,6 @@ def rms_matmul_rbe_qkv_wrapper(x: torch.Tensor,
         stride_k_batch=k.stride(0), stride_k_m=k.stride(1), stride_k_n=k.stride(2),
         stride_v_batch=v.stride(0), stride_v_m=v.stride(1), stride_v_n=v.stride(2),
         USE_FP8=q_weight.dtype == torch.int8,
-        THETA=theta,
         EPS=eps,
         BLOCK_SIZE_M=16, BLOCK_SIZE_N=64, BLOCK_SIZE_K=64,
         num_stages=4, num_warps=4

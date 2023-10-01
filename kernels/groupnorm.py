@@ -16,6 +16,10 @@ import triton
 import triton.language as tl
 
 @triton.jit
+def silu(input):
+    return 1 / (1 + tl.math.fast_expf(-input.to(tl.float32)))
+
+@triton.jit
 def group_norm(
     output_ptr: tl.tensor,
     input_ptr: tl.tensor,
@@ -28,6 +32,7 @@ def group_norm(
     bias_ptr: tl.tensor,
     eps: tl.float32,
     dtype: tl.constexpr,
+    activation: tl.constexpr,
     y_block_size: tl.constexpr,
     x_block_size: tl.constexpr,
 ):
@@ -104,6 +109,7 @@ def group_norm(
         bias = tl.load(bias_block_ptr, boundary_check=(0,))
         output += bias
 
+    output = silu(output)
     tl.store(output_block_ptr, output.to(dtype), boundary_check=(0, 1))
     tl.store(rstd_block_ptr, rstd.to(dtype))
     tl.store(mean_block_ptr, mean.to(dtype))
