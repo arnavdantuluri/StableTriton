@@ -2,7 +2,7 @@ import torch
 
 from ...kernels.layer_norm import layer_norm
 from torch.fx import subgraph_rewriter
-
+# TODO: Needs to be rewritten
 
 def layer_norm_wrapper(v: torch.Tensor, layernorm: torch.nn.LayerNorm):
     # small hack to avoid casting weights/bias at each call

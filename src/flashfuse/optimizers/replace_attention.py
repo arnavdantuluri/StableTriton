@@ -3,6 +3,7 @@ Potentially outdated, need to test but I believe subgraph_rewriter does not requ
 I'm fairly certain it does so with whatever nodes follow the pattern listed
 Pattern-matching is done based on use-def relationships, not node names; I was right!
 '''
+# TODO: Needs to be rewritten
 from typing import Optional
 
 import torch

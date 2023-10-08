@@ -1,3 +1,7 @@
 diffusers==0.21.2
-torch==2.0.1
-triton_nightly==2.1.0.dev20230809222936
+einops==0.7.0
+# flash_attn==1.0.5
+setuptools==62.1.0
+tabulate==0.8.9
+torch==2.1.0
+triton==2.1.0

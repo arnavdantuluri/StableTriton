@@ -7,7 +7,7 @@ from triton.ops.matmul_perf_model import early_config_prune, estimate_matmul_tim
 
 @triton.jit
 def silu(input):
-    return 1 / (1 + tl.math.fast_expf(-input.to(tl.float32)))
+    return input * tl.sigmoid(input)
 
 def init_to_zero(name):
     return lambda nargs: nargs[name].zero_()
@@ -155,13 +155,20 @@ def kernel_fma(
 
     # optional: fused activation (while the data is in shared memory)
     if ACTIVATION:
-        acc = silu(acc).to(dtype)
+        acc = silu(acc)
+    acc = acc.to(dtype)
 
     # write back result
     C = C + m_offs[:, None] * output_m_stride + n_offs[None, :] * output_n_stride
     c_ptr_mask = (m_offs < M)[:, None] & (n_offs < N)[None, :]
     tl.store(C, acc, mask=c_ptr_mask)
 
+map_dtype = {
+    torch.float32: tl.float32,
+    torch.float16: tl.float16,
+    torch.int32: tl.int32,
+    torch.int16: tl.int16,
+}
 
 def sdxl_forward(
     x: torch.Tensor,
@@ -193,7 +200,7 @@ def sdxl_forward(
         x_,
         weight,  # data ptrs
         bias if bias is not None else x,  # auto skip bias if not present
-        x_.dtype,
+        map_dtype[x_.dtype],
         M,  # shapes
         N,
         K,
@@ -213,3 +220,16 @@ def sdxl_forward(
 
     outputs = outputs if x.ndim == 2 else outputs.reshape(x.shape[0], -1, N)
     return outputs
+
+if __name__ == "__main__":
+    x = torch.rand(5, 5, dtype=torch.float32).cuda()
+    lin = torch.nn.Linear(5, 5).cuda()
+    nonlin = torch.nn.SiLU().cuda()
+    weight = lin.weight
+    bias = lin.bias
+    activation = True
+    out = sdxl_forward(x, weight, bias, activation)
+    out_torch = nonlin(lin(x))
+    print(out - out_torch)
+    # Make sure fp16 works because activations are done in fp32
+    print(out.dtype)

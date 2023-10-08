@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import copy
 from torch.fx.experimental.optimization import  matches_module_pattern, replace_node_module
-from kernels.linear import sdxl_forward
+from flashfuse.kernels.linear import sdxl_forward
 from functools import partial
 
 class M(nn.Module):
@@ -34,23 +34,31 @@ def fuse(model: torch.nn.Module, inplace=False) -> torch.nn.Module:
             if matches_module_pattern(pattern, node, modules):
                 if len(node.args[0].users) > 1:  # Output of conv is used by other nodes
                     continue
+                # Silu and Linear dependent on each other
                 linear = modules[node.args[0].target]
-                fused_linear = return_patched_forward(linear)
+                fused_linear = return_patched_forward(linear, True)
                 replace_node_module(node.args[0], modules, fused_linear)
                 node.replace_all_uses_with(node.args[0])
                 new_graph.erase_node(node)
     return fx.GraphModule(fx_model, new_graph)
 
-def return_patched_forward(orig_linear):
+def return_patched_forward(orig_linear, activation):
     mod = copy.deepcopy(orig_linear)
-    mod.forward = partial(fused_linear_forward, orig_linear)
+    mod.forward = partial(fused_linear_forward, orig_linear, activation)
     return mod
 
-def fused_linear_forward(lin, x):
-    return sdxl_forward(x, lin.weight, lin.bias, activation=True)   
+def fused_linear_forward(lin, activation, x):
+    return sdxl_forward(x, lin.weight, lin.bias, activation=activation)   
 
-m = M()
-fx_model = fuse(m)
-old_traced = fx.symbolic_trace(m)
-assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
-print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
+if __name__ == "__main__":
+    m = M().cuda()
+    fx_model = fuse(m)
+    old_traced = fx.symbolic_trace(m)
+    assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
+    print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
+    # Test output
+    x = torch.rand(5, 5, dtype=torch.float32).cuda()
+    out_old = m(x)
+    out_fused = fx_model(x)
+    # Some margin for triton code.
+    assert ((out_fused - out_old).abs() < 1e-3).all(), "Outputs don't match"

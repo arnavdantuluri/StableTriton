@@ -4,7 +4,7 @@ import torch
 
 from ...kernels.linear import sdxl_forward
 from torch.fx import symbolic_trace, subgraph_rewriter
-
+# TODO: Needs to be rewritten
 def exists(val):
     return val is not None
 
