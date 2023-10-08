@@ -1,7 +1,7 @@
 diffusers==0.21.2
 einops==0.7.0
 # flash_attn==1.0.5
-setuptools==62.1.0
+setuptools==65.5.1
 tabulate==0.8.9
 torch==2.1.0
 triton==2.1.0
