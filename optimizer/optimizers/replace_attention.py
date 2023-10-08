@@ -1,6 +1,7 @@
 '''
 Potentially outdated, need to test but I believe subgraph_rewriter does not require you to specify exactly what nodes to replace.
 I'm fairly certain it does so with whatever nodes follow the pattern listed
+Pattern-matching is done based on use-def relationships, not node names; I was right!
 '''
 from typing import Optional
 

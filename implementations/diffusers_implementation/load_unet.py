@@ -1,8 +1,9 @@
 from unet import UNet2DConditionModel
 import torch
+import torch.nn as nn
 from torch.fx import symbolic_trace, subgraph_rewriter
 unet_new = UNet2DConditionModel().half()
-
+import sys
 # Load weights from the original model
 from diffusers import DiffusionPipeline
 
@@ -15,11 +16,16 @@ pipe = DiffusionPipeline.from_pretrained(
 )
 
 unet_new.load_state_dict(pipe.unet.state_dict())
-
 # use the weights
 pipe.unet = unet_new
-print(unet_new)
+traced_module = symbolic_trace(unet_new)
 
-prompt = "a photo of an astronaut riding a horse on mars"
+orig_stdout = sys.stdout
+f = open('named_modules.txt', 'w')
+sys.stdout = f
 
-image = pipe(prompt).images[0]
+for module in traced_module.named_modules():
+    print(module[1])
+
+sys.stdout = orig_stdout
+f.close()
