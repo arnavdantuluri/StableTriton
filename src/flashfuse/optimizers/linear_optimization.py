@@ -1,10 +1,29 @@
-import torch.fx as fx
+# TODO: Need to test with nested modules and see if it still works
+from typing import Callable
+
 import torch
 import torch.nn as nn
-import copy
-from torch.fx.experimental.optimization import  matches_module_pattern, replace_node_module
 from flashfuse.kernels.linear import sdxl_forward
-from functools import partial
+from flashfuse.optimizers.utils.util import replace_pattern
+import torch.fx as fx
+
+class M(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin1 = nn.Linear(5, 5)
+        self.lin2 = nn.Linear(5,5)
+        self.lin3 = nn.Linear(5,5)
+        self.nonlin = nn.SiLU()
+        self.dropout = nn.Dropout(p=0.0)
+    
+    def forward(self, x):
+        return self.dropout(self.nonlin(self.lin3(self.lin2(self.lin1(x)))))
+
+def linear_wrapper(v: torch.Tensor, linear: torch.nn.Linear):
+    return linear_wrapper_functional(v, linear.weight, linear.bias)
+
+
+torch.fx.wrap("linear_wrapper")
 
 class M(nn.Module):
     def __init__(self):
@@ -17,42 +36,47 @@ class M(nn.Module):
     def forward(self, x):
         return self.nonlin(self.lin3(self.lin2(self.lin1(x))))
 
-def fuse(model: torch.nn.Module, inplace=False) -> torch.nn.Module:
-    """
-    Fuses convolution/BN layers for inference purposes. Will deepcopy your
-    model by default, but can modify the model inplace as well.
-    """
-    patterns = [(nn.Linear, nn.SiLU)]
-    if not inplace:
-        model = copy.deepcopy(model)
-    fx_model = fx.symbolic_trace(model)
-    modules = dict(fx_model.named_modules())
-    new_graph = copy.deepcopy(fx_model.graph)
 
-    for pattern in patterns:
-        for node in new_graph.nodes:
-            if matches_module_pattern(pattern, node, modules):
-                if len(node.args[0].users) > 1:  # Output of conv is used by other nodes
-                    continue
-                # Silu and Linear dependent on each other
-                linear = modules[node.args[0].target]
-                fused_linear = return_patched_forward(linear, True)
-                replace_node_module(node.args[0], modules, fused_linear)
-                node.replace_all_uses_with(node.args[0])
-                new_graph.erase_node(node)
-    return fx.GraphModule(fx_model, new_graph)
+def linear_wrapper_functional(v: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor):
+    # small hack to avoid casting weights/bias at each call
+    if v.dtype == torch.float16:
+        if weight.dtype == torch.float32:
+            weight.data = weight.data.half()
+        if bias is not None and bias.dtype == torch.float32:
+            bias.data = bias.data.half()
 
-def return_patched_forward(orig_linear, activation):
-    mod = copy.deepcopy(orig_linear)
-    mod.forward = partial(fused_linear_forward, orig_linear, activation)
-    return mod
+    return sdxl_forward(v, weight, bias, activation=False)
 
-def fused_linear_forward(lin, activation, x):
-    return sdxl_forward(x, lin.weight, lin.bias, activation=activation)   
+
+torch.fx.wrap("linear_wrapper_functional")
+
+def replace_linear(gm: torch.fx.GraphModule):
+    class Pattern(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(1, 1)
+
+        def forward(self, v):
+            return self.linear(v)
+
+    class Replacement(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(1, 1)
+
+        def forward(self, v):
+            return linear_wrapper(v, self.linear)
+
+    replace_pattern(gm, Pattern(), Replacement())
+
+
+def replace_all_linear(gm: torch.fx.GraphModule):
+    replace_linear(gm)
 
 if __name__ == "__main__":
     m = M().cuda()
-    fx_model = fuse(m)
+    fx_model = fx.symbolic_trace(m)
+    replace_all_linear(fx_model)
     old_traced = fx.symbolic_trace(m)
     assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
     print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
@@ -60,5 +84,6 @@ if __name__ == "__main__":
     x = torch.rand(5, 5, dtype=torch.float32).cuda()
     out_old = m(x)
     out_fused = fx_model(x)
+    print(fx_model.code)
     # Some margin for triton code.
     assert ((out_fused - out_old).abs() < 1e-3).all(), "Outputs don't match"

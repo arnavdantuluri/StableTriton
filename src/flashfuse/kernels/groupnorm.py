@@ -14,6 +14,7 @@
 
 import triton
 import triton.language as tl
+import torch
 
 @triton.jit
 def silu(input):
@@ -113,3 +114,34 @@ def group_norm(
     tl.store(output_block_ptr, output.to(dtype), boundary_check=(0, 1))
     tl.store(rstd_block_ptr, rstd.to(dtype))
     tl.store(mean_block_ptr, mean.to(dtype))
+
+def groupnorm_wrapper(
+        input: torch.Tensor, num_groups: torch.int, weight: torch.Tensor, bias: torch.Tensor, eps: torch.float
+    ):
+        factory_kwargs = {"device": input.device, "dtype": input.dtype}
+        num_batches, y_size, x_size = input.shape
+        output = torch.zeros_like(input)
+        rstd = torch.empty((num_batches, num_groups), **factory_kwargs)
+        mean = torch.empty((num_batches, num_groups), **factory_kwargs)
+
+        def grid(meta):
+            return (num_batches * num_groups,)
+
+        group_norm[grid](
+            output,
+            input,
+            rstd,
+            mean,
+            y_size // num_groups,
+            y_size,
+            x_size,
+            num_groups,
+            weight,
+            bias,
+            eps,
+            input.dtype,
+            triton.next_power_of_2(y_size // num_groups),
+            triton.next_power_of_2(x_size),
+        )
+
+        return output, rstd, mean

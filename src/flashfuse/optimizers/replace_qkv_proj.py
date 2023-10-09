@@ -63,5 +63,3 @@ def replace_linear_activation(gm: torch.fx.GraphModule):
 # TODO: Needs to be changed to work with sdxl qkv proj layers
 def replace_all_linear(gm: torch.fx.GraphModule):
     replace_linear_activation(gm)
-    replace_linear_activation(gm)
-    replace_linear_activation(gm)

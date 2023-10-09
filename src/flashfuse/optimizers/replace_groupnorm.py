@@ -1,7 +1,7 @@
 # TODO: Need to test with nested modules and see if it still works
 import torch
 
-from flashfuse.kernels.layer_norm import layer_norm
+from flashfuse.kernels.groupnorm import groupnorm_wrapper
 from torch.fx import subgraph_rewriter
 import torch.nn as nn
 import torch.fx as fx
@@ -13,23 +13,14 @@ class M(nn.Module):
         self.lin2 = nn.Linear(5,5)
         self.lin3 = nn.Linear(5,5)
         self.nonlin = nn.SiLU()
-        self.dropout = nn.LayerNorm((5,5), eps=1e-05, elementwise_affine=True)
+        self.dropout =  nn.GroupNorm(32, 5, eps=1e-06, affine=True)
     
     def forward(self, x):
         return self.dropout(self.nonlin(self.lin3(self.lin2(self.lin1(x)))))
 
 
-def layer_norm_wrapper(v: torch.Tensor, layernorm: torch.nn.LayerNorm):
-    # small hack to avoid casting weights/bias at each call
-    if v.dtype == torch.float16:
-        if layernorm.weight.dtype == torch.float32:
-            layernorm.weight.data = layernorm.weight.data.half()
-        if layernorm.bias.dtype == torch.float32:
-            layernorm.bias.data = layernorm.bias.data.half()
-
-    return layer_norm(v, layernorm.weight, layernorm.bias, layernorm.eps)
-
-
+def layer_norm_wrapper(v: torch.Tensor, groupnorm: torch.nn.LayerNorm):
+    return groupnorm_wrapper(v, groupnorm.num_groups, groupnorm.weight, groupnorm.bias, groupnorm.eps)
 
 torch.fx.wrap("layer_norm_wrapper")
 torch.fx.wrap("layer_norm_rms_wrapper")
@@ -39,18 +30,18 @@ def replace_layer_norm(gm: torch.fx.GraphModule):
     class Pattern(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.layernorm = torch.nn.LayerNorm((1, 1))
+            self.groupnorm = torch.nn.GroupNorm(32, 1)
 
         def forward(self, v):
-            return self.layernorm(v)
+            return self.groupnorm(v)
 
     class Replacement(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.layernorm = torch.nn.LayerNorm((1, 1))
+            self.groupnorm = torch.nn.GroupNorm(32, 1)
 
         def forward(self, v):
-            return layer_norm_wrapper(v, self.layernorm)
+            return layer_norm_wrapper(v, self.groupnorm)
 
     subgraph_rewriter.replace_pattern(gm, Pattern(), Replacement())
 

@@ -1,5 +1,5 @@
 All Ops:
-Timesteps (Torch; Triton is outperformed at longer sequences)
+Timesteps (Triton)
 TimestepEmbedding (Triton)
 GroupNorm (Triton)
 Conv2D (Torch, not possible to implement conv at suitable performace in Triton)
