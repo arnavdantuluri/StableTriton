@@ -2,7 +2,7 @@ from typing import Callable
 
 import torch
 
-from ...kernels.attention_proj import qkv_proj_wrapper
+from flashfuse.kernels.attention_proj import qkv_proj_wrapper
 from torch.fx import subgraph_rewriter
 # TODO: Needs to be rewritten
 def exists(val):

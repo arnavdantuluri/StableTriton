@@ -3,7 +3,7 @@ import triton.language as tl
 import torch
 import math
 from einops import rearrange
-from timestep import call
+from timestep import timstep_triton
 
 def torch_ref(num_channels, timesteps):
     half_dim = num_channels // 2
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # Prove that emb = timesteps[:, None].float() * emb[None, :] just expands dim by 1
     # torch_sin, torch_cos = rearrange(torch_sin, "(b e) h w -> b e h w", e=1), rearrange(torch_cos, "(b e) h w -> b e h w", e=1)
     
-    triton_sin, triton_cos = call(x)
+    triton_sin, triton_cos = timstep_triton(x)
     triton_sin, triton_cos = rearrange(triton_sin, "(b e) h w -> b e h w", e=1), rearrange(triton_cos, "(b e) h w -> b e h w", e=1)
 
     assert (torch_sin - triton_sin).all() < 1e-8, "Assertion does not hold, some issue in the triton kernel"
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         if provider == 'torch':
             ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch_ref(num_channels, x), quantiles=quantiles)
         if provider == 'triton':
-            ms, min_ms, max_ms = triton.testing.do_bench(lambda: call(x), quantiles=quantiles)
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: timstep_triton(x), quantiles=quantiles)
         gbps = lambda ms: 12 * size / ms * 1e-6
         return min_ms
 

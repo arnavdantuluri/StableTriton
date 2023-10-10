@@ -13,13 +13,12 @@ from torch._inductor.utils import instance_descriptor
 
 @pointwise(size_hints=[1048576], filename=__file__, meta={'signature': {0: '*fp32', 1: '*fp32', 2: '*fp32', 3: 'i32'}, 'device': 0, 'constants': {}, 'mutated_arg_names': [], 'configs': [instance_descriptor(divisible_by_16=(0, 1, 2, 3), equal_to_1=())]})
 @triton.jit
-def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel, XBLOCK : tl.constexpr):
-    xnumel = 921600
+def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel, xshape, XBLOCK : tl.constexpr):
     xoffset = tl.program_id(0) * XBLOCK
     xindex = xoffset + tl.arange(0, XBLOCK)[:]
     xmask = xindex < xnumel
     x2 = xindex
-    x0 = xindex % 960
+    x0 = xindex % xshape
     tmp0 = tl.load(in_ptr0 + (x2), xmask)
     tmp1 = x0
     tmp2 = tmp1.to(tl.float64)
@@ -30,7 +29,7 @@ def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel, XBLOCK : tl.constexpr):
     tmp7 = tmp6.to(tl.float32)
     tmp8 = -9.210340371976184
     tmp9 = tmp7 * tmp8
-    tmp10 = 960.0
+    tmp10 = xshape
     tmp11 = tmp9 / tmp10
     tmp12 = tl.exp(tmp11)
     tmp13 = tmp0 * tmp12
@@ -39,12 +38,12 @@ def triton_(in_ptr0, out_ptr0, out_ptr1, xnumel, XBLOCK : tl.constexpr):
     tl.store(out_ptr0 + (x2 + tl.zeros([XBLOCK], tl.int32)), tmp14, xmask)
     tl.store(out_ptr1 + (x2 + tl.zeros([XBLOCK], tl.int32)), tmp15, xmask)
 
-def call(x):
+def timstep_triton(x):
     xnumel = x.numel()
     buf0 = torch.empty_like(x)
     buf1 = torch.empty_like(x)
     stream0 = get_cuda_stream(0)
-    triton_[grid(xnumel)](x, buf0, buf1, xnumel, stream=stream0)
+    triton_[grid(xnumel)](x, buf0, buf1, xnumel, x.shape[2], stream=stream0)
     del x
     return (buf0, buf1, )
 
@@ -52,4 +51,4 @@ def call(x):
 if __name__ == "__main__":
     x = torch.rand((1, 1, 960, 960), device='cuda', dtype=torch.float32)
     # call([arg0_1])
-    print_performance(lambda: call(x))
+    print_performance(lambda: timstep_triton(x))
