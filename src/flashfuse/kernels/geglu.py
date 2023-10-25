@@ -1,196 +1,73 @@
-import triton
+# Let linear ffn in geglu be replaced with triton impl and this replaces state * gelu(gate)
+import triton 
 import triton.language as tl
-from typing import Callable, List
+from triton import jit
+
 import torch
-from linear import kernel_fma
+import math
 
-def dtype(input):
-    if input == torch.float32:
-        return tl.float32
-    elif input == torch.float16:
-        return tl.float16
-    elif input == torch.bfloat16:
-        return tl.bfloat16
-    elif input == torch.int64:
-        return tl.int64
-    else:
-        raise ValueError(f"Unable to convert the given input: '{input}'.")
+sqrt2 = math.sqrt(2.0)
 
 @triton.jit
-def gelu(input: tl.tensor):
-        return 0.5 * input * (1 + tl.math.tanh(input * 0.7978845608028654 * (1 + 0.044715 * input * input)))
+def gelu(x):
+    """Gaussian Error Linear Unit (GELU)"""
+    return x * 0.5 * (1.0 + tl.math.erf(x / sqrt2))
 
-def num_warps_and_stages_for_geglu(size):
-    if size >= 2**15:
-        num_warps = 8
-        num_stages = 3
-    elif size >= 2**14:
-        num_warps = 4
-        num_stages = 4
-    else:
-        num_warps = 2
-        num_stages = 5
-    return num_warps, num_stages
-
-
-def geglu_configs():
-    configs = []
-    for k_block_size in [32, 64]:
-        for m_block_size in [16, 64, 128]:
-            for x_block_size in [32, 64, 128]:
-                num_warps, num_stages = num_warps_and_stages_for_geglu(m_block_size * x_block_size)
-                config = triton.Config(
-                    {
-                        "m_block_size": m_block_size,
-                        "k_block_size": k_block_size,
-                        "x_block_size": x_block_size,
-                    },
-                    num_warps=num_warps,
-                    num_stages=num_stages,
-                )
-                configs.append(config)
-    return configs
-
-def autotune(
-    configs: List[triton.Config],
-    key: List[str],
-    prune_configs_by: Callable = None,
-    reset_to_zero: List[str] = None,
-    warmup: int = 25,
-    rep: int = 100,
-):
-    return triton.autotune(
-        configs if True else [configs[0]], key, prune_configs_by, reset_to_zero, warmup, rep
-    )
-
-
-
-@autotune(geglu_configs(), ["m_size", "k_size", "x_size"])
-@triton.jit
-def geglu(
-    output_ptr: tl.tensor,
-    state_ptr: tl.tensor,
-    gate_ptr: tl.tensor,
-    input_ptr: tl.tensor,
-    weight_ptr: tl.tensor,
-    bias_ptr: tl.tensor,
-    m_size: tl.int32,
-    n_size: tl.int32,
-    k_size: tl.int32,
-    x_size: tl.int32,
-    input_batch_stride: tl.int32,
-    input_m_stride: tl.int32,
-    input_k_stride: tl.int32,
-    weight_n_stride: tl.int32,
-    weight_k_stride: tl.int32,
-    use_accelerator: tl.constexpr,
-    dtype: tl.constexpr,
-    m_block_size: tl.constexpr,
-    k_block_size: tl.constexpr,
-    x_block_size: tl.constexpr,
-):
+# returns o = state_ptr * gelu(gate_ptr)
+@jit
+def geglu_kernel(state_ptr, gate_ptr, output_ptr, xnumel, xblock: tl.constexpr):
     pid = tl.program_id(0)
-    num_m_blocks = tl.cdiv(m_size, m_block_size)
-    num_x_blocks = tl.cdiv(x_size, x_block_size)
-    num_blocks = num_m_blocks * num_x_blocks
-    batch = pid // num_blocks
-    block = pid % num_blocks
-    m_block = block // num_x_blocks
-    x_block = block % num_x_blocks
-    m_offset = m_block * m_block_size
-    x_offset = x_block * x_block_size
-    output_block_ptr = tl.make_block_ptr(
-            output_ptr + batch * m_size * x_size,
-            shape=(m_size, x_size),
-            strides=(x_size, 1),
-            offsets=(m_offset, x_offset),
-            block_shape=(m_block_size, x_block_size),
-            order=(1, 0),
+    xidx = xblock * pid
+    offsets = xidx + tl.arange(0, xblock)
+    xmask = offsets < xnumel
+    state = tl.load(state_ptr + offsets, xmask)
+    gate = tl.load(gate_ptr + offsets, xmask)
+    output = state * gelu(gate)
+    tl.store(output_ptr + offsets, output, xmask)
+
+def geglu_wrapper(state, gate):
+    assert state.is_contiguous()
+    assert gate.is_contiguous()
+    output = torch.empty_like(state)
+    n_elements = state.numel() # state and gate elements should be the same
+    grid = lambda meta: (triton.cdiv(n_elements, meta['xblock']),)
+    geglu_kernel[grid](state, gate, output, n_elements, xblock=1024) # 1024 set arbitrarily to be same as dropout op since both are elementwise ops
+    return output
+
+if __name__ == "__main__":
+    # Test correctness of output
+    state = torch.rand(5, 5).cuda()
+    gate = torch.rand(5, 5).cuda()
+    output_pt = state * torch.nn.functional.gelu(gate)
+    output_tri = geglu_wrapper(state, gate)
+    assert ((output_pt - output_tri).abs() < 1e-3).all(), "Outputs don't match"
+    @triton.testing.perf_report(
+        triton.testing.Benchmark(
+            x_names=['size'],  # Argument names to use as an x-axis for the plot.
+            x_vals=[
+                2 ** i for i in range(12, 17, 1)
+            ],  # Different possible values for `x_name`.
+            x_log=True,  # x axis is logarithmic.
+            line_arg='provider',  # Argument name whose value corresponds to a different line in the plot.
+            line_vals=['triton', 'torch'],  # Possible values for `line_arg`.
+            line_names=['Triton', 'Torch'],  # Label name for the lines.
+            styles=[('blue', '-'), ('green', '-')],  # Line styles.
+            ylabel='GB/s',  # Label name for the y-axis.
+            plot_name='vector-add-performance',  # Name for the plot. Used also as a file name for saving the plot.
+            args={},  # Values for function arguments not in `x_names` and `y_name`.
         )
-    # Gate Projection
-    kernel_fma(
-        gate_ptr,
-        input_ptr,
-        weight_ptr,  # data ptrs
-        bias_ptr,  # auto skip bias if not present
-        dtype,
-        m_size,  # shapes
-        n_size,
-        k_size,
-        m_size // 32,  # key for triton cache (limit number of compilations)
-        n_size // 32,
-        k_size // 32,
-        output_m_stride=gate_ptr.stride(0),  # strides
-        output_n_stride=gate_ptr.stride(1),
-        a_m_stride=input_m_stride,
-        a_k_stride=input_k_stride,
-        b_n_stride=weight_n_stride,
-        b_k_stride=weight_k_stride,
-        HAS_BIAS=bias_ptr is not None,  # optional fused bias
-        ACTIVATION=False,
-        BLOCK_M=m_block_size,
-        BLOCK_N=k_block_size,
-        BLOCK_K=x_block_size,
-        GROUP_M=8,  # speed optimization: group the programs
-    ) 
-    # State Projection
-    kernel_fma(
-        state_ptr,
-        input_ptr,
-        weight_ptr,  # data ptrs
-        bias_ptr,  # auto skip bias if not present
-        dtype,
-        m_size,  # shapes
-        n_size,
-        k_size,
-        m_size // 32,  # key for triton cache (limit number of compilations)
-        n_size // 32,
-        k_size // 32,
-        output_m_stride=state_ptr.stride(0),  # strides
-        output_n_stride=state_ptr.stride(1),
-        a_m_stride=input_m_stride,
-        a_k_stride=input_k_stride,
-        b_n_stride=weight_n_stride,
-        b_k_stride=weight_k_stride,
-        HAS_BIAS=bias_ptr is not None,  # optional fused bias
-        ACTIVATION=False,
-        BLOCK_M=m_block_size,
-        BLOCK_N=k_block_size,
-        BLOCK_K=x_block_size,
-        GROUP_M=8,
     )
-    output = state_ptr * gelu(gate_ptr)
-    
-    tl.store(output_block_ptr, output.to(dtype))
+    def benchmark(size, provider):
+        x = torch.rand(size, device='cuda', dtype=torch.float32)
+        y = torch.rand(size, device='cuda', dtype=torch.float32)
+        quantiles = [0.5, 0.2, 0.8]
+        if provider == 'torch':
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: x * torch.nn.functional.gelu(y), quantiles=quantiles)
+            print("Torch:", min_ms)
+        if provider == 'triton':
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: geglu_wrapper(x, y), quantiles=quantiles)
+            print("Triton:", min_ms)
+        gbps = lambda ms: 12 * size / ms * 1e-6
+        return gbps(ms), gbps(max_ms), gbps(min_ms)
 
-def geglu_wrapper(input, weight, bias, use_accelerator):
-    factory_kwargs = {"device": input.device, "dtype": input.dtype}
-    num_batches, m_size, k_size = input.shape
-    n_size, _ = weight.shape
-    x_size = n_size // 2
-    output = torch.empty(num_batches, m_size, x_size, **factory_kwargs)
-    state_gate = torch.empty(num_batches, m_size, n_size, **factory_kwargs)
-
-    def grid(meta):
-        num_m_blocks = triton.cdiv(m_size, meta["m_block_size"])
-        num_x_blocks = triton.cdiv(x_size, meta["x_block_size"])
-        return (num_batches * num_m_blocks * num_x_blocks,)
-
-    geglu[grid](
-        output,
-        state_gate,
-        input,
-        weight,
-        bias,
-        m_size,
-        n_size,
-        k_size,
-        x_size,
-        input.stride(0),
-        input.stride(1),
-        input.stride(2),
-        weight.stride(0),
-        weight.stride(1),
-        use_accelerator,
-        dtype(input.dtype),
-    )
+    benchmark.run(print_data=True, show_plots=True)

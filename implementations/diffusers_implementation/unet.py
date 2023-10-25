@@ -464,6 +464,7 @@ class UNet2DConditionModel(nn.Module):
     def forward(
         self, sample, timesteps, encoder_hidden_states, added_cond_kwargs, **kwargs
     ):
+        print(sample.shape)
         # Implement the forward pass through the model
         timesteps = timesteps.expand(sample.shape[0])
         t_emb = self.time_proj(timesteps).to(dtype=sample.dtype)

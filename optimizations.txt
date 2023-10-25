@@ -2,7 +2,7 @@ All Ops:
 Timesteps (Triton)
 TimestepEmbedding (Triton)
 GroupNorm (Triton)
-Conv2D (Torch, not possible to implement conv at suitable performace in Triton)
+Conv2D (Torch) (Cuda maybe? From https://github.com/chengzeyi/stable-fast)
 Dropout (Triton)
 Linear (Triton)
 SiLU (Triton)
@@ -16,7 +16,6 @@ Fused Kernels:
             Linear; SiLU
             Linear
         GroupNorm; SiLU
-        SiLU; Linear
         GroupNorm; SiLU
         Dropout
     Attention:

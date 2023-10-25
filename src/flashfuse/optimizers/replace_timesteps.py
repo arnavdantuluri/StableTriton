@@ -1,4 +1,3 @@
-# TODO: Needs to be tested
 from typing import Optional
 
 import torch
@@ -38,16 +37,12 @@ def timestep_wrapper(
     return sin, cos
 
 
-torch.fx.wrap("attention_wrapper")
+torch.fx.wrap("timestep_wrapper")
 
 
-def fuse_attention(gm: torch.fx.GraphModule):
-    def pattern(x, num_channels):
-        half_dim = num_channels // 2
-        exponent = -math.log(10000) * torch.arange(
-            half_dim, dtype=torch.float32
-        ).to(x.device)
-        exponent = exponent / (half_dim - 0.0)
+def fuse_timesteps(gm: torch.fx.GraphModule):
+    def pattern(x, exponent):
+        exponent = exponent / (x.shape[2] - 0.0)
 
         emb = torch.exp(exponent)
         emb = x[:, None].float() * emb[None, :]
@@ -56,17 +51,17 @@ def fuse_attention(gm: torch.fx.GraphModule):
         cos_emb = torch.cos(emb)
         return sin_emb, cos_emb
 
-    def replace(x):
+    def replace(x, exponent):
         sin, cos = timestep_wrapper(x)
         return sin, cos
 
     subgraph_rewriter.replace_pattern(gm, pattern, replace)
 
 if __name__ == "__main__":
-    m = Timesteps().cuda()
+    m = Timesteps(num_channels=10).cuda()
     fx_model = fx.symbolic_trace(m)
     old_traced = fx.symbolic_trace(m)
-    fuse_attention(fx_model)
+    fuse_timesteps(fx_model)
     assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
     print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
     # Test output

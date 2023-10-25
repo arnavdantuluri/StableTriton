@@ -13,19 +13,10 @@ pipe = DiffusionPipeline.from_pretrained(
         torch_dtype=torch.float16,
         use_safetensors=True,
         variant="fp16",
-)
+).cuda()
 
 unet_new.load_state_dict(pipe.unet.state_dict())
 # use the weights
 pipe.unet = unet_new
-traced_module = symbolic_trace(unet_new)
-
-orig_stdout = sys.stdout
-f = open('named_modules.txt', 'w')
-sys.stdout = f
-
-for module in traced_module.named_modules():
-    print(module[1])
-
-sys.stdout = orig_stdout
-f.close()
+gen = torch.Generator().manual_seed(42)
+pipe("a colorful, movie like photo of dog", generator=gen).images[0]

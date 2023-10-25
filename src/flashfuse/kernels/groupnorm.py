@@ -1,55 +1,56 @@
-# Copyright 2023 ⓒ Kakao Brain Corp.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import triton
 import triton.language as tl
 import torch
+import torch.nn as nn
+
+def dtype(input):
+    if input == torch.float32:
+        return tl.float32
+    elif input == torch.float16:
+        return tl.float16
+    elif input == torch.bfloat16:
+        return tl.bfloat16
+    elif input == torch.int64:
+        return tl.int64
+    else:
+        raise ValueError(f"Unable to convert the given input: '{input}'.")
+
 
 @triton.jit
 def silu(input):
-    return 1 / (1 + tl.math.fast_expf(-input.to(tl.float32)))
+    return input * tl.sigmoid(input)
+
 
 @triton.jit
-def group_norm(
+def forward(
     output_ptr: tl.tensor,
     input_ptr: tl.tensor,
     rstd_ptr: tl.tensor,
     mean_ptr: tl.tensor,
-    y_size: tl.int32,
-    x_size: tl.int32,
-    num_groups: tl.int32,
+    group_size,
+    y_size,
+    x_size,
+    num_groups,
     weight_ptr: tl.tensor,
     bias_ptr: tl.tensor,
-    eps: tl.float32,
+    eps,
     dtype: tl.constexpr,
-    activation: tl.constexpr,
-    y_block_size: tl.constexpr,
+    group_block_size: tl.constexpr,
     x_block_size: tl.constexpr,
+    ACTIVATION: tl.constexpr,
 ):
-    group_size = y_size // num_groups
     pid = tl.program_id(0)
     batch = pid // num_groups
     group = pid % num_groups
-    batch_offset = batch * y_size * x_size
     num_elements = group_size * x_size
+    batch_offset = batch * num_groups * num_elements
     group_offset = batch_offset + group * num_elements
     output_block_ptr = tl.make_block_ptr(
         output_ptr + group_offset,
         shape=(group_size, x_size),
         strides=(x_size, 1),
         offsets=(0, 0),
-        block_shape=(y_block_size, x_block_size),
+        block_shape=(group_block_size, x_block_size),
         order=(1, 0),
     )
     input_block_ptr = tl.make_block_ptr(
@@ -57,7 +58,7 @@ def group_norm(
         shape=(group_size, x_size),
         strides=(x_size, 1),
         offsets=(0, 0),
-        block_shape=(y_block_size, x_block_size),
+        block_shape=(group_block_size, x_block_size),
         order=(1, 0),
     )
     rstd_block_ptr = tl.make_block_ptr(
@@ -76,13 +77,13 @@ def group_norm(
         block_shape=(1,),
         order=(0,),
     )
-    input = tl.load(input_block_ptr, boundary_check=(0, 1), padding_option="zero")
-    mean = tl.sum(tl.view(input / num_elements, (1, y_block_size * x_block_size)), 1)
-    y_condition = tl.arange(0, y_block_size) < group_size
-    x_condition = tl.arange(0, x_block_size) < x_size
-    condition = y_condition[:, None] & x_condition[None, :]
-    centered_mean = tl.where(condition, input - mean, 0)
-    var = tl.sum(tl.view(centered_mean * centered_mean / num_elements, (1, y_block_size * x_block_size)), 1)
+
+
+    input = tl.load(input_block_ptr)
+    mean = tl.sum(tl.view(input / num_elements, (1, group_block_size * x_block_size)), 1)
+    centered_mean = input - mean
+
+    var = tl.sum(tl.view(centered_mean * centered_mean / num_elements, (1, group_block_size * x_block_size)), 1)
     rstd = tl.math.rsqrt(var + eps)
     output = centered_mean * rstd
 
@@ -92,7 +93,7 @@ def group_norm(
             shape=(y_size, 1),
             strides=(1, y_size),
             offsets=(group * group_size, 0),
-            block_shape=(y_block_size, 1),
+            block_shape=(group_block_size, 1),
             order=(0, 1),
         )
         weight = tl.load(weight_block_ptr, boundary_check=(0,))
@@ -104,19 +105,28 @@ def group_norm(
             shape=(y_size, 1),
             strides=(1, y_size),
             offsets=(group * group_size, 0),
-            block_shape=(y_block_size, 1),
+            block_shape=(group_block_size, 1),
             order=(0, 1),
         )
         bias = tl.load(bias_block_ptr, boundary_check=(0,))
         output += bias
+    if ACTIVATION:
+        output = silu(output)
+    
+    tl.store(output_block_ptr, output.to(dtype))
 
-    output = silu(output)
-    tl.store(output_block_ptr, output.to(dtype), boundary_check=(0, 1))
     tl.store(rstd_block_ptr, rstd.to(dtype))
     tl.store(mean_block_ptr, mean.to(dtype))
 
+map_dtype = {
+    torch.float32: tl.float32,
+    torch.float16: tl.float16,
+    torch.int32: tl.int32,
+    torch.int16: tl.int16,
+}
+
 def groupnorm_wrapper(
-        input: torch.Tensor, num_groups: torch.int, weight: torch.Tensor, bias: torch.Tensor, eps: torch.float
+        input: torch.Tensor, num_groups: torch.int, weight: torch.Tensor, bias: torch.Tensor, eps: torch.float, activation: bool = False,
     ):
         factory_kwargs = {"device": input.device, "dtype": input.dtype}
         num_batches, y_size, x_size = input.shape
@@ -127,7 +137,7 @@ def groupnorm_wrapper(
         def grid(meta):
             return (num_batches * num_groups,)
 
-        group_norm[grid](
+        forward[grid](
             output,
             input,
             rstd,
@@ -139,9 +149,18 @@ def groupnorm_wrapper(
             weight,
             bias,
             eps,
-            input.dtype,
+            map_dtype[input.dtype],
             triton.next_power_of_2(y_size // num_groups),
             triton.next_power_of_2(x_size),
+            ACTIVATION=activation,
         )
 
-        return output, rstd, mean
+        return output
+
+if __name__ == "__main__":
+    input = torch.randn(1, 128, 32).cuda()
+    # Separate 6 channels into 3 groups
+    m = nn.GroupNorm(32, 128).cuda()
+    output_triton = groupnorm_wrapper(input, 32, m.weight, m.bias, m.eps)
+    output = m(input)
+    assert ((output_triton - output).abs() < 1e-3).all(), "Outputs don't match"

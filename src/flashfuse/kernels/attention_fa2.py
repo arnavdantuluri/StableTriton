@@ -1,4 +1,13 @@
-# FA2
+"""
+Fused Attention
+===============
+This is a Triton implementation of the Flash Attention algorithm
+(see: Dao et al., https://arxiv.org/pdf/2205.14135v2.pdf; Rabe and Staats https://arxiv.org/pdf/2112.05682v2.pdf)
+
+Sequence Parallel implementation inspired by HazyResearch
+(see https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/flash_attn_triton.py)
+"""
+
 import torch
 
 from triton import cdiv, jit
@@ -12,11 +21,12 @@ def _fwd_kernel(
     Out,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
-    stride_vz, stride_vh, stride_vn, stride_vk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_on,
     Z, H, N_CTX,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    IS_CAUSAL: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -40,13 +50,14 @@ def _fwd_kernel(
     V_block_ptr = tl.make_block_ptr(
         base=V + qvk_offset,
         shape=(N_CTX, BLOCK_DMODEL),
-        strides=(stride_vn, stride_vk),
+        strides=(stride_vk, stride_vn),
         offsets=(0, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
     # initialize offsets
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
     # initialize pointer to m and l
     m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
@@ -60,20 +71,23 @@ def _fwd_kernel(
     q = tl.load(Q_block_ptr)
     q = (q * qk_scale).to(K.dtype.element_ty)
     lo = 0
-    hi = (start_m + 1) * N_CTX
+    hi = (start_m + 1) * BLOCK_M if IS_CAUSAL else N_CTX
     for start_n in range(lo, hi, BLOCK_N):
         # -- load k, v --
         k = tl.load(K_block_ptr)
         v = tl.load(V_block_ptr)
         # -- compute qk ---
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        if IS_CAUSAL:
+            qk = tl.where(offs_m[:, None] >= (start_n + offs_n[None, :]), qk, float("-inf"))
         qk += tl.dot(q, k, allow_tf32=True)
         # -- compute scaling constant ---
         m_i_new = tl.maximum(m_i, tl.max(qk, 1))
         alpha = tl.math.exp2(m_i - m_i_new)
         p = tl.math.exp2(qk - m_i_new[:, None])
         # -- scale and update acc --
-        acc *= alpha[:, None]
+        acc_scale = l_i * 0 + alpha  # workaround some compiler bug
+        acc *= acc_scale[:, None]
         acc += tl.dot(p.to(V.dtype.element_ty), v, allow_tf32=True)
         # -- update m_i and l_i --
         l_i = l_i * alpha + tl.sum(p, 1)
@@ -95,7 +109,6 @@ def _fwd_kernel(
         order=(1, 0)
     )
     tl.store(O_block_ptr, acc.to(K.dtype.element_ty))
-
 
 def attention(q, k, v, sm_scale, sequence_parallel=False):
     # only support for Ampere now
@@ -122,7 +135,7 @@ def attention(q, k, v, sm_scale, sequence_parallel=False):
         o.stride(0), o.stride(1), o.stride(2), o.stride(3),
         q.shape[0], q.shape[1], q.shape[2],
         BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
+        IS_CAUSAL=False,
         num_warps=num_warps,
         num_stages=4)
-
     return o

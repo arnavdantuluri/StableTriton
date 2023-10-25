@@ -1,4 +1,4 @@
-# TODO: Need to test with nested modules and see if it still works
+# Works with nested modules; Refer to test in replace_layernorm.py
 from typing import Callable
 
 import torch
@@ -69,14 +69,10 @@ def replace_linear(gm: torch.fx.GraphModule):
 
     replace_pattern(gm, Pattern(), Replacement())
 
-
-def replace_all_linear(gm: torch.fx.GraphModule):
-    replace_linear(gm)
-
 if __name__ == "__main__":
     m = M().cuda()
     fx_model = fx.symbolic_trace(m)
-    replace_all_linear(fx_model)
+    replace_linear(fx_model)
     old_traced = fx.symbolic_trace(m)
     assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
     print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
