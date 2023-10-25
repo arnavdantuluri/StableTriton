@@ -9,7 +9,7 @@ with pathlib.Path("requirements.txt").open() as f:
 
 
 setup(
-    name="flashfuse",
+    name="stabletriton",
     version="0.1",
     license="Apache License 2.0",
     license_files=("LICENSE",),

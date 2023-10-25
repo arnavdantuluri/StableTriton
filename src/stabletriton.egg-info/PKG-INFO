@@ -1,0 +1,18 @@
+Metadata-Version: 2.1
+Name: stabletriton
+Version: 0.1
+Summary: Accelerate diffusion model inference with custom GPU kernels written in Triton
+Home-page: https://github.com/arnavdantuluri/StableTriton/tree/main
+License: Apache License 2.0
+Keywords: Deep Learning
+Platform: UNKNOWN
+Requires-Python: ==3.10.*
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
+# StableTriton (WIP)
+A Triton inference engine built in the same grain as Kernl https://github.com/ELS-RD/kernl/ but for diffusion models, specifically for SDXL
+
+# Usage
+When done you will simply need to run model = compile(model). As long as it is a nn.Module torch.fx should overwrite native torch ops with triton ops. Will initally set it up with ComfyUI and Diffusers. Automatic1111 will be worked on soon after
+
