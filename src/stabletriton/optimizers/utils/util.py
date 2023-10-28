@@ -22,7 +22,7 @@ import torch
 from torch import Graph
 from torch.fx import GraphModule, Node, symbolic_trace
 
-from flashfuse.optimizers.utils.fx import static_args_are_equal
+from stabletriton.optimizers.utils.fx import static_args_are_equal
 
 
 # Originaly taken from

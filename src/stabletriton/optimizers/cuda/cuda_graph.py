@@ -6,7 +6,7 @@ from torch._dynamo import utils as dynamo_utils
 from torch._inductor.compile_fx import cudagraphify_impl
 from torch._subclasses import FakeTensor
 
-from flashfuse.optimizers.pool_cuda_graphs import CudaGraphPool, get_aligned_size
+from stabletriton.optimizers.cuda.pool_cuda_graphs import CudaGraphPool, get_aligned_size
 
 
 static_inputs_pool = []
@@ -86,7 +86,7 @@ def prepare_inputs(inputs, pools):
     return input_copies
 
 
-def cuda_graphs_wrapper(model: Callable, inputs, tuple) -> Callable:
+def cuda_graphs_wrapper(model: Callable, inputs) -> Callable:
     """
     Wrapper to run the model with cuda graphs.
     @param model: model to save as a CUDA graph

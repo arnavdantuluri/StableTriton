@@ -2,8 +2,8 @@ from typing import Optional
 
 import torch
 
-from flashfuse.kernels.geglu import geglu_wrapper
-from flashfuse.optimizers.replace_linear import replace_linear
+from stabletriton.kernels.geglu import geglu_wrapper
+from stabletriton.optimizers.replace_linear import replace_linear
 import torch.nn as nn
 from torch.fx import subgraph_rewriter
 import torch.fx as fx
@@ -30,7 +30,7 @@ def geglu_triton(
 torch.fx.wrap("geglu_triton")
 
 
-def fuse_gelu(gm: torch.fx.GraphModule):
+def fuse_geglu(gm: torch.fx.GraphModule):
     def pattern(state, gate):
         return state * torch.nn.functional.gelu(gate)
 
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     fx_model = fx.symbolic_trace(m)
     old_traced = fx.symbolic_trace(m)
     replace_linear(fx_model)
-    fuse_gelu(fx_model)
+    fuse_geglu(fx_model)
     assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
     print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
     print(fx_model.code)

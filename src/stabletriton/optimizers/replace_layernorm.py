@@ -1,8 +1,8 @@
 import torch
 
-from flashfuse.kernels.layer_norm import _layer_norm_fwd_fused_single_pass, layer_norm
+from stabletriton.kernels.layer_norm import _layer_norm_fwd_fused_single_pass, layer_norm
 import torch.fx as fx
-from flashfuse.optimizers.utils.util import replace_pattern
+from stabletriton.optimizers.utils.util import replace_pattern
 
 class subpattern(torch.nn.Module):
     def __init__(self):

@@ -22,9 +22,8 @@ class Timesteps(nn.Module):
         self.num_channels = num_channels
 
     def forward(self, timesteps):
-        print(timesteps.shape)
         half_dim = self.num_channels // 2
-        exponent = -math.log(10000) * torch.arange(
+        exponent  = -math.log(10000) * torch.arange(
             half_dim, dtype=torch.float32
         ).to(timesteps.device)
         exponent = exponent / (half_dim - 0.0)
@@ -84,8 +83,8 @@ class ResnetBlock2D(nn.Module):
         temb = self.nonlinearity(temb)
         temb = self.time_emb_proj(temb)[:, :, None, None]
         hidden_states = hidden_states + temb
-        
         hidden_states = self.norm2(hidden_states)
+
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.conv2(hidden_states)
@@ -123,8 +122,16 @@ class Attention(nn.Module):
 
     def forward(self, hidden_states, encoder_hidden_states=None):
         q = self.to_q(hidden_states)
-        k = self.to_k(hidden_states)
-        v = self.to_v(hidden_states)
+        k = (
+            self.to_k(encoder_hidden_states)
+            if encoder_hidden_states is not None
+            else self.to_k(hidden_states)
+        )
+        v = (
+            self.to_v(encoder_hidden_states)
+            if encoder_hidden_states is not None
+            else self.to_v(hidden_states)
+        )
         b, t, c = q.size()
 
         q = q.view(q.size(0), q.size(1), self.num_heads, self.head_dim).transpose(1, 2)
@@ -464,7 +471,6 @@ class UNet2DConditionModel(nn.Module):
     def forward(
         self, sample, timesteps, encoder_hidden_states, added_cond_kwargs, **kwargs
     ):
-        print(sample.shape)
         # Implement the forward pass through the model
         timesteps = timesteps.expand(sample.shape[0])
         t_emb = self.time_proj(timesteps).to(dtype=sample.dtype)

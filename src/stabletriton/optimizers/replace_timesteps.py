@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 
-from flashfuse.kernels.timestep import timstep_triton
+from stabletriton.kernels.timestep import timstep_triton
 import torch.nn as nn
 from torch.fx import subgraph_rewriter
 import torch.fx as fx

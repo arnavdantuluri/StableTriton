@@ -129,7 +129,7 @@ def groupnorm_wrapper(
         input: torch.Tensor, num_groups: torch.int, weight: torch.Tensor, bias: torch.Tensor, eps: torch.float, activation: bool = False,
     ):
         factory_kwargs = {"device": input.device, "dtype": input.dtype}
-        num_batches, y_size, x_size = input.shape
+        num_batches, _, y_size, x_size = input.shape
         output = torch.zeros_like(input)
         rstd = torch.empty((num_batches, num_groups), **factory_kwargs)
         mean = torch.empty((num_batches, num_groups), **factory_kwargs)

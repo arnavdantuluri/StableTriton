@@ -1,8 +1,8 @@
 # TODO: Need to debug
 import torch
 
-from flashfuse.kernels.groupnorm import groupnorm_wrapper
-from flashfuse.optimizers.utils.util import replace_pattern
+from stabletriton.kernels.groupnorm import groupnorm_wrapper
+from stabletriton.optimizers.utils.util import replace_pattern
 import torch.nn as nn
 import torch.fx as fx
 
@@ -30,12 +30,12 @@ class M(nn.Module):
         return self.norm1(self.norm(self.nonlin(self.lin3(self.lin2(self.lin1(x))))))
 
 
-def layer_norm_wrapper(v: torch.Tensor, groupnorm: torch.nn.LayerNorm):
+def group_norm_wrapper(v: torch.Tensor, groupnorm: torch.nn.GroupNorm):
     return groupnorm_wrapper(v, groupnorm.num_groups, groupnorm.weight, groupnorm.bias, groupnorm.eps)
 
-torch.fx.wrap("layer_norm_wrapper")
+torch.fx.wrap("group_norm_wrapper")
 
-def replace_layer_norm(gm: torch.fx.GraphModule):
+def replace_group_norm(gm: torch.fx.GraphModule):
     class Pattern(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -50,7 +50,7 @@ def replace_layer_norm(gm: torch.fx.GraphModule):
             self.groupnorm = torch.nn.GroupNorm(32, 32)
 
         def forward(self, v):
-            return layer_norm_wrapper(v, self.groupnorm)
+            return group_norm_wrapper(v, self.groupnorm)
 
     replace_pattern(gm, Pattern(), Replacement())
 
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     m = M().cuda()
     fx_model = fx.symbolic_trace(m)
     old_traced = fx.symbolic_trace(m)
-    replace_layer_norm(fx_model)
+    replace_group_norm(fx_model)
     assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
     print("Fx Graph replacement was a success! Kernel Fusion works perfectly")
     # Test output
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     out_old = m(x)
     out_fused = fx_model(x)
     # Uncomment below if you want a better understanding of what fx replacement is doing
-    # Should see 3 "__main___layer_norm_wrapper" functions since there are three groupnorms being replaced
+    # Should see 3 "__main___group_norm_wrapper" functions since there are three groupnorms being replaced
     # print(fx_model.code) 
     # Some margin for triton code.
     assert ((out_fused - out_old).abs() < 1e-3).all(), "Outputs don't match"

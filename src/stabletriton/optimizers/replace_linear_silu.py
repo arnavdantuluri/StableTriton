@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import copy
 from torch.fx.experimental.optimization import  matches_module_pattern, replace_node_module
-from flashfuse.kernels.linear import sdxl_forward
+from stabletriton.kernels.linear import sdxl_forward
 from functools import partial
 
 class M(nn.Module):
@@ -17,7 +17,7 @@ class M(nn.Module):
     def forward(self, x):
         return self.nonlin(self.lin3(self.lin2(self.lin1(x))))
 
-def fuse(model: torch.nn.Module, inplace=False) -> torch.nn.Module:
+def fuse_linear_activ(model: torch.nn.Module, inplace=False) -> torch.nn.Module:
     """
     Fuses convolution/BN layers for inference purposes. Will deepcopy your
     model by default, but can modify the model inplace as well.
@@ -52,7 +52,7 @@ def fused_linear_forward(lin, activation, x):
 
 if __name__ == "__main__":
     m = M().cuda()
-    fx_model = fuse(m)
+    fx_model = fuse_linear_activ(m)
     old_traced = fx.symbolic_trace(m)
     assert fx_model.code != old_traced.code, "Issue with fusion with fx graph"
     print("Fx Graph replacement was a success! Kernel Fusion works perfectly")

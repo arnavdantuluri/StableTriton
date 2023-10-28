@@ -3,8 +3,8 @@ from typing import Callable
 
 import torch
 import torch.nn as nn
-from flashfuse.kernels.linear import sdxl_forward
-from flashfuse.optimizers.utils.util import replace_pattern
+from stabletriton.kernels.linear import sdxl_forward
+from stabletriton.optimizers.utils.util import replace_pattern
 import torch.fx as fx
 
 class M(nn.Module):

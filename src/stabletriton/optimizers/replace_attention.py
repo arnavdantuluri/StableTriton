@@ -4,13 +4,13 @@ from typing import Optional
 import torch
 
 import xformers
-from flashfuse.kernels.attention_fa2 import attention
+from stabletriton.kernels.attention_fa2 import attention
 import xformers.ops as xops
 import torch.nn as nn
 from torch.fx import subgraph_rewriter
 import torch.fx as fx
 try:
-    from flashfuse.kernels.attention_fa1 import attention as flash_attention_cuda
+    from stabletriton.kernels.attention_fa1 import attention as flash_attention_cuda
     flash_attn_available = True 
 except:
     flash_attn_available = False 
