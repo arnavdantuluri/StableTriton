@@ -1,3 +1,5 @@
+# I am likely going to stop development on this project. If you were looking for a lightweight inference engine please look at https://github.com/chengzeyi/stable-fast. Seems to work quite well
+
 # StableTriton (WIP)
 A Triton inference engine built in the same grain as Kernl https://github.com/ELS-RD/kernl/ but for diffusion models, specifically for SDXL
 
