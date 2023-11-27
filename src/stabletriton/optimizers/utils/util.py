@@ -301,11 +301,12 @@ def _replace_submodules(gm: GraphModule, replacement: torch.nn.Module) -> None:
             # CHANGE HERE
             module_name = node.target
             if node.op == "get_attr":
-                if "." in module_name:
-                    mod, attr = module_name.split(".")
-                    module_name = mod
-                else:
-                    module_name = ""
+                # print(module_name)
+                # if "." in module_name:
+                #     mod, attr = module_name.split(".")
+                #     module_name = mod
+                # else:
+                module_name = ""
 
             gm_submod = try_get_submodule(gm, module_name)
 

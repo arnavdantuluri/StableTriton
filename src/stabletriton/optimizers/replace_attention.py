@@ -64,8 +64,6 @@ def attention_wrapper(
     output: torch.Tensor,
     sm_scale: float, num_heads, head_dim,
 ) -> torch.Tensor:
-    # When tensors are shaped for bmm, first dimension is used for both batch and heads. Our kernel supports tensors
-    # with 4 dimensions, so we add another dimension of size 1 for heads.
     output = xops.memory_efficient_attention(q, k, v, scale=sm_scale)
     return output
 

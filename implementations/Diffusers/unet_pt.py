@@ -4,8 +4,6 @@
 
 # Author : Simo Ryu
 
-# Big thanks to https://github.com/cloneofsimo/minSDXL/blob/master/sdxl_rewrite.py helped a lot with his minimal unet implementation
-# Project would likely not be possible without him :)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,8 +22,8 @@ class Timesteps(nn.Module):
     def forward(self, timesteps):
         half_dim = self.num_channels // 2
         exponent  = -math.log(10000) * torch.arange(
-            half_dim, dtype=torch.float32
-        ).to(timesteps.device)
+            half_dim, device='cuda', dtype=torch.float32
+        )
         exponent = exponent / (half_dim - 0.0)
 
         emb = torch.exp(exponent)

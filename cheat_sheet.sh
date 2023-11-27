@@ -13,4 +13,5 @@ ml torchvision
 module unload PyTorch 
 module unload torchvision
 export HF_HOME="/p/scratch/ccstdl/dantuluri1/transformers_cache"
-srun --pty --nodes=1 -A cstdl --partition develbooster --gres gpu:4 /bin/bash
+srun --pty --nodes=1 -A transfernetx --partition develbooster --gres gpu:4 /bin/bash
+srun --pty --nodes=1 -A ccstdl --partition develbooster --gres gpu:4 /bin/bash

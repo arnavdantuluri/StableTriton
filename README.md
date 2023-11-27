@@ -1,4 +1,4 @@
-# StableTriton (WIP)
+# StableTriton (WIP) (Diffusers implementation working; Boosts it/s from 5.94it/s to 8.58it/s with triton and cuda graphs)
 A Triton inference engine built in the same grain as Kernl https://github.com/ELS-RD/kernl/ but for diffusion models, specifically for SDXL
 
 # Usage
